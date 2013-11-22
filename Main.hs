@@ -51,8 +51,8 @@ sdword = DInt SD . fromIntegral
 uqword = DInt UQ . fromIntegral
 sqword = DInt SQ . fromIntegral
 
-decodeData :: Structure -> B.ByteString -> Get String
-decodeData typs bs = show <$> sequence $ map getDValue typs
+decodeData :: Structure -> Get String
+decodeData typs = show <$> (sequence $ map getDValue typs)
 
 getDValue UB = ubyte  <$> getWord8
 getDValue SB = sbyte  <$> getWord8
@@ -121,26 +121,29 @@ options = [ Option ['c'] ["configFile"] (ReqArg FlagCfg "FILE") "configuration f
 
 processConfig = undefined
 
-processBinary config fileName = do
-  bs <- B.readFile fileName
-  let strs = decodeData [UB] bs
-  let newFileName = addExtension ".bin" . dropExtension $ fileName
-  writeFile newFileName (intercalate "," $ strs)
-
-processText config fileName = do 
-  strs <- filter (== ",") . words <$> readFile fileName
-  let newFileName = addExtension ".csv" . dropExtension $ fileName
-  let bs = encodeData [UB] strs
-  B.writeFile newFileName bs
-
-processFiles file flags = let config = processConfig flags in 
-  if takeExtension file `elem` ["txt", "csv"]
-    then processText config file
-    else processBinary config file
+--processBinary config fileName = do
+--  bs <- B.readFile fileName
+--  let strs = decodeData [UB] bs
+--  let newFileName = addExtension ".bin" . dropExtension $ fileName
+--  writeFile newFileName (intercalate "," $ strs)
+--
+--processText config fileName = do 
+--  strs <- filter (== ",") . words <$> readFile fileName
+--  let newFileName = addExtension ".csv" . dropExtension $ fileName
+--  let bs = encodeData [UB] strs
+--  B.writeFile newFileName bs
+--
+--processFiles file flags = let config = processConfig flags in 
+--  if takeExtension file `elem` ["txt", "csv"]
+--    then processText config file
+--    else processBinary config file
 
 
 mergeRows :: (Monad m) => Conduit [a] m a
 mergeRows = CL.concat
+
+applyFrom :: (Monad m) => [(a -> b)] -> Conduit a m b
+applyFrom funcList = CL.scanl (\ a (f:fs) -> (fs, f a)) (cycle funcList)
 
 main = do
   --args <- getArgs
@@ -148,10 +151,9 @@ main = do
   --  (flags, [file],      [])   -> processFiles file flags
   --  (_,     nonOpts, [])   -> error $ "Unrecognized arguments: " ++ unwords nonOpts
   --  (_,     _,       msgs) -> error $ concat msgs ++ usageInfo "" options
-  runResourceT $ do 
-    put <- sourceFile "test.txt" $= intoCSV defCSVSettings $= mergeRows 
-    typ <- mkDValue (cycle typs)
-    conduitPut $$ sinkFile "test.bin"
-  print $ (inputString == decodeData typs binFile)
-  print $ (encodeData typs inputString == binFile)
+  let decodeFList = map (putDValue .mkDValue) typs
+  runResourceT $ sourceFile "test.txt" $= intoCSV defCSVSettings =$= mergeRows =$= applyFrom decodeFList =$= conduitPut $$ sinkFile "test.bin"
+  --print $ (inputString == runGet (decodeData typs) binFile)
+  --print $ (encodeData typs inputString == binFile)
+  print ""
   

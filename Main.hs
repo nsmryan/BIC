@@ -6,22 +6,41 @@ import System.FilePath.Posix
 
 import Control.Applicative
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as B
 import qualified Data.Foldable as L
-import Data.Serialize
+import Data.Binary
+import Data.Binary.Put
+import Data.Binary.Get
 import Data.List
+import Data.Conduit
+import qualified Data.Conduit.List as CL
+import Data.Conduit.Binary
+import Data.Conduit.Serialization.Binary
+import Data.CSV.Conduit
 
 
-csv = [UB, UW, UD]
+typs = [UB, UW, UD]
 binFile = B.pack [1, 0, 2, 0, 0, 0, 3]
 inputString = ["1", "2", "3"]
 
 -- Data Types
-data DType = UB | SB | UW | SW | UD | SD | UQ | SQ
+data DType = UB | SB | UW | SW | UD | SD | UQ | SQ deriving (Show, Eq)
 data DValue = DInt DType Int
 
 instance Show DValue where
   show (DInt _ n) = show n
+
+type Structure = [DType]
+
+structLength = sum . map typeLength 
+typeLength UB = 1
+typeLength SB = 1
+typeLength UW = 2
+typeLength SW = 2
+typeLength UD = 4
+typeLength SD = 4
+typeLength UQ = 8
+typeLength SQ = 8
 
 ubyte = DInt UB . fromIntegral
 sbyte = DInt SB . fromIntegral
@@ -32,11 +51,8 @@ sdword = DInt SD . fromIntegral
 uqword = DInt UQ . fromIntegral
 sqword = DInt SQ . fromIntegral
 
-decodeData :: [DType] -> B.ByteString -> [String]
-decodeData typs bs = let dvalues = sequence $ map getDValue typs in
-  case (runGet dvalues bs) of
-    Left err -> error err
-    Right as -> map show as
+decodeData :: Structure -> B.ByteString -> Get String
+decodeData typs bs = show <$> sequence $ map getDValue typs
 
 getDValue UB = ubyte  <$> getWord8
 getDValue SB = sbyte  <$> getWord8
@@ -59,8 +75,8 @@ putDValue (DInt SD n) = putWord32be $ fromIntegral n
 putDValue (DInt UQ n) = putWord64be $ fromIntegral n
 putDValue (DInt SQ n) = putWord64be $ fromIntegral n
 
-encodeData :: [DType] -> [String] -> B.ByteString
-encodeData typs values = runPut . sequence_ . map putDValue $ zipWith mkDValue typs values
+encodeData :: Structure -> [String] -> Put
+encodeData typs values = sequence_ . map putDValue $ zipWith mkDValue typs values
 
 -- Bit Data Definitions
 data BitData = BDBit
@@ -107,14 +123,14 @@ processConfig = undefined
 
 processBinary config fileName = do
   bs <- B.readFile fileName
-  let strs = decodeData (repeat UB) bs
+  let strs = decodeData [UB] bs
   let newFileName = addExtension ".bin" . dropExtension $ fileName
   writeFile newFileName (intercalate "," $ strs)
 
 processText config fileName = do 
   strs <- filter (== ",") . words <$> readFile fileName
   let newFileName = addExtension ".csv" . dropExtension $ fileName
-  let bs = encodeData (repeat UB) strs
+  let bs = encodeData [UB] strs
   B.writeFile newFileName bs
 
 processFiles file flags = let config = processConfig flags in 
@@ -122,10 +138,20 @@ processFiles file flags = let config = processConfig flags in
     then processText config file
     else processBinary config file
 
-main = do
-  args <- getArgs
-  case getOpt RequireOrder options args of
-    (flags, [file],      [])   -> processFiles file flags
-    (_,     nonOpts, [])   -> error $ "Unrecognized arguments: " ++ unwords nonOpts
-    (_,     _,       msgs) -> error $ concat msgs ++ usageInfo "" options
 
+mergeRows :: (Monad m) => Conduit [a] m a
+mergeRows = CL.concat
+
+main = do
+  --args <- getArgs
+  --case getOpt RequireOrder options args of
+  --  (flags, [file],      [])   -> processFiles file flags
+  --  (_,     nonOpts, [])   -> error $ "Unrecognized arguments: " ++ unwords nonOpts
+  --  (_,     _,       msgs) -> error $ concat msgs ++ usageInfo "" options
+  runResourceT $ do 
+    put <- sourceFile "test.txt" $= intoCSV defCSVSettings $= mergeRows 
+    typ <- mkDValue (cycle typs)
+    conduitPut $$ sinkFile "test.bin"
+  print $ (inputString == decodeData typs binFile)
+  print $ (encodeData typs inputString == binFile)
+  

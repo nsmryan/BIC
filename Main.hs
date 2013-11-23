@@ -1,5 +1,6 @@
 module Main where
 
+import Prelude as P
 import System.Console.GetOpt
 import System.Environment
 import System.FilePath.Posix
@@ -13,10 +14,13 @@ import Data.Binary.Put
 import Data.Binary.Get
 import Data.List
 import Data.Conduit
+import qualified Data.Conduit.Util as CU
 import qualified Data.Conduit.List as CL
 import Data.Conduit.Binary
 import Data.Conduit.Serialization.Binary
 import Data.CSV.Conduit
+
+import Text.CSV
 
 
 typs = [UB, UW, UD]
@@ -24,13 +28,31 @@ binFile = B.pack [1, 0, 2, 0, 0, 0, 3]
 inputString = ["1", "2", "3"]
 
 -- Data Types
-data DType = UB | SB | UW | SW | UD | SD | UQ | SQ deriving (Show, Eq)
+data DType = UB | SB | UW | SW | UD | SD | UQ | SQ
+  deriving (Show, Eq, Read)
 data DValue = DInt DType Int
 
 instance Show DValue where
   show (DInt _ n) = show n
 
 type Structure = [DType]
+
+type FileName = String
+
+data Endianess = BE | LE deriving (Show)
+
+data Encoding = Binary | CSV
+
+data Config = Config
+  {
+    endianess :: Endianess
+  , types :: [DType]
+  , coding :: Encoding
+  , outputFile :: FileName
+  }
+
+defaultConfig = Config BE [UB] CSV "output"
+
 
 structLength = sum . map typeLength 
 typeLength UB = 1
@@ -105,39 +127,6 @@ bs2hex bs = concatMap toHex $ map fromIntegral $ B.unpack bs where
     lowByte  = (n `mod` 16)
 
 -- 
-data Endianess = BE | LE deriving (Show)
-type FileName = String
-data Flag = FlagEndian String | FlagCfg FileName deriving (Show)
-data Config = Config
-  {
-    endianess :: Endianess
-  , types :: [DType]
-  }
-
-options :: [OptDescr Flag]
-options = [ Option ['c'] ["configFile"] (ReqArg FlagCfg "FILE") "configuration file",
-            Option ['e'] ["endianess"]  (ReqArg FlagEndian "BE") "endianess of files"
-          ]
-
-processConfig = undefined
-
---processBinary config fileName = do
---  bs <- B.readFile fileName
---  let strs = decodeData [UB] bs
---  let newFileName = addExtension ".bin" . dropExtension $ fileName
---  writeFile newFileName (intercalate "," $ strs)
---
---processText config fileName = do 
---  strs <- filter (== ",") . words <$> readFile fileName
---  let newFileName = addExtension ".csv" . dropExtension $ fileName
---  let bs = encodeData [UB] strs
---  B.writeFile newFileName bs
---
---processFiles file flags = let config = processConfig flags in 
---  if takeExtension file `elem` ["txt", "csv"]
---    then processText config file
---    else processBinary config file
-
 
 mergeRows :: (Monad m) => Conduit [a] m a
 mergeRows = CL.concat
@@ -150,14 +139,56 @@ fileToValues fileName =
   intoCSV defCSVSettings
   =$= mergeRows
 
-main = do
-  --args <- getArgs
-  --case getOpt RequireOrder options args of
-  --  (flags, [file],      [])   -> processFiles file flags
-  --  (_,     nonOpts, [])   -> error $ "Unrecognized arguments: " ++ unwords nonOpts
-  --  (_,     _,       msgs) -> error $ concat msgs ++ usageInfo "" options
-  runResourceT $ fileToValues "test.txt" =$= CL.map (putWord8 . read) =$= conduitPut $$ sinkFile "test.bin"
-  --print $ (inputString == runGet (decodeData typs) binFile)
-  --print $ (encodeData typs inputString == binFile)
-  print ""
+fileToTypes fn = do
+  as <- fileToValues fn =$= CL.map read =$= CL.consume
+  cycleConduit as
+
+cycleConduit as = CL.sourceList $ cycle as
+
+num2byte = putWord8 . read
+
+run (Config end typs enc outFile) inFile =
+  runResourceT $ 
+    CU.zip (CL.sourceList (cycle typs)) (fileToValues inFile) =$=
+    CL.map (putDValue . (uncurry mkDValue)) =$=
+    conduitPut $$
+    sinkFile outFile
   
+
+options :: [OptDescr (Config -> IO Config)]
+options = 
+ [
+   Option ['c'] ["configFile"]
+          (ReqArg (\ arg option -> do 
+            contents <- parseCSVFromFile arg
+            case contents of
+              Left err -> error $ show err
+              Right csv -> do
+                let typeNames = P.head csv
+                let typs = map read typeNames
+                return $ option {types = typs})
+                 "FILE")
+          "configuration file",
+
+   Option ['l'] ["little"]
+          (NoArg (\ option -> return $ option {endianess = LE}))
+          "uses little endian encoding instead of big endian",
+
+   Option ['o'] ["output"]
+          (ReqArg (\ arg option -> return $ option {outputFile = arg})
+                  "FILE")
+          "output file name",
+
+   Option ['d'] ["coding"]
+          (NoArg (\ option -> return $ option {coding = Binary}))
+          "encode or decode"
+ ]
+
+main = do
+  args <- getArgs
+  case getOpt Permute options args of
+    (opts, inFile:[],  [])   -> do
+      config <- foldl (>>=) (return defaultConfig) opts
+      run config inFile
+    (_,     nonOpts, [])   -> error $ "Unrecognized arguments: " ++ unwords nonOpts
+    (_,     _,       msgs) -> error $ concat msgs ++ usageInfo "" options

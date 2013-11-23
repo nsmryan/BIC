@@ -145,14 +145,18 @@ mergeRows = CL.concat
 applyFrom :: (Monad m) => [(a -> b)] -> Conduit a m b
 applyFrom funcList = CL.scanl (\ a (f:fs) -> (fs, f a)) (cycle funcList)
 
+fileToValues fileName =
+  sourceFile fileName $=
+  intoCSV defCSVSettings
+  =$= mergeRows
+
 main = do
   --args <- getArgs
   --case getOpt RequireOrder options args of
   --  (flags, [file],      [])   -> processFiles file flags
   --  (_,     nonOpts, [])   -> error $ "Unrecognized arguments: " ++ unwords nonOpts
   --  (_,     _,       msgs) -> error $ concat msgs ++ usageInfo "" options
-  let decodeFList = map (putDValue .mkDValue) typs
-  runResourceT $ sourceFile "test.txt" $= intoCSV defCSVSettings =$= mergeRows =$= applyFrom decodeFList =$= conduitPut $$ sinkFile "test.bin"
+  runResourceT $ fileToValues "test.txt" =$= CL.map (putWord8 . read) =$= conduitPut $$ sinkFile "test.bin"
   --print $ (inputString == runGet (decodeData typs) binFile)
   --print $ (encodeData typs inputString == binFile)
   print ""

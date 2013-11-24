@@ -1,13 +1,15 @@
 module Main where
 
-import Prelude as P
+import Prelude as P hiding ((.), id)
 import System.Console.GetOpt
 import System.Environment
 import System.FilePath.Posix
 
 import Control.Applicative
+import Control.Monad.IO.Class
+import Control.Category
 
-import qualified Data.ByteString.Lazy as B
+import qualified Data.ByteString as B
 import qualified Data.Foldable as L
 import Data.Binary
 import Data.Binary.Put
@@ -21,6 +23,7 @@ import Data.Conduit.Serialization.Binary
 import Data.CSV.Conduit
 
 import Text.CSV
+import Text.Printf
 
 
 typs = [UB, UW, UD]
@@ -30,10 +33,11 @@ inputString = ["1", "2", "3"]
 -- Data Types
 data DType = UB | SB | UW | SW | UD | SD | UQ | SQ
   deriving (Show, Eq, Read)
-data DValue = DInt DType Int
+data DValue = DInt { dType :: DType, dNum :: Int }
 
 instance Show DValue where
-  show (DInt _ n) = show n
+  --show (DInt _ n) = show n
+  show = printf "%d" . dNum
 
 type Structure = [DType]
 
@@ -73,32 +77,50 @@ sdword = DInt SD . fromIntegral
 uqword = DInt UQ . fromIntegral
 sqword = DInt SQ . fromIntegral
 
-decodeData :: Structure -> Get String
-decodeData typs = show <$> (sequence $ map getDValue typs)
-
-getDValue UB = ubyte  <$> getWord8
-getDValue SB = sbyte  <$> getWord8
-getDValue UW = uword  <$> getWord16be
-getDValue SW = sword  <$> getWord16be
-getDValue UD = udword <$> getWord32be
-getDValue SD = sdword <$> getWord32be
-getDValue UQ = uqword <$> getWord64be
-getDValue SQ = sqword <$> getWord64be
+getDValue endian typ = case endian of
+  BE -> case typ of
+    UB -> ubyte  <$> getWord8
+    SB -> sbyte  <$> getWord8
+    UW -> uword  <$> getWord16be
+    SW -> sword  <$> getWord16be
+    UD -> udword <$> getWord32be
+    SD -> sdword <$> getWord32be
+    UQ -> uqword <$> getWord64be
+    SQ -> sqword <$> getWord64be
+  LE -> case typ of
+    UB -> ubyte  <$> getWord8
+    SB -> sbyte  <$> getWord8
+    UW -> uword  <$> getWord16le
+    SW -> sword  <$> getWord16le
+    UD -> udword <$> getWord32le
+    SD -> sdword <$> getWord32le
+    UQ -> uqword <$> getWord64le
+    SQ -> sqword <$> getWord64le
+    
 
 mkDValue :: DType -> String -> DValue
 mkDValue t str = DInt t (read str)
 
-putDValue (DInt UB n) = putWord8 $ fromIntegral n
-putDValue (DInt SB n) = putWord8 $ fromIntegral n
-putDValue (DInt UW n) = putWord16be $ fromIntegral n
-putDValue (DInt SW n) = putWord16be $ fromIntegral n
-putDValue (DInt UD n) = putWord32be $ fromIntegral n
-putDValue (DInt SD n) = putWord32be $ fromIntegral n
-putDValue (DInt UQ n) = putWord64be $ fromIntegral n
-putDValue (DInt SQ n) = putWord64be $ fromIntegral n
+putDValue endian typ = case endian of
+  BE -> case typ of
+    (DInt UB n) -> putWord8 $ fromIntegral n
+    (DInt SB n) -> putWord8 $ fromIntegral n
+    (DInt UW n) -> putWord16be $ fromIntegral n
+    (DInt SW n) -> putWord16be $ fromIntegral n
+    (DInt UD n) -> putWord32be $ fromIntegral n
+    (DInt SD n) -> putWord32be $ fromIntegral n
+    (DInt UQ n) -> putWord64be $ fromIntegral n
+    (DInt SQ n) -> putWord64be $ fromIntegral n
+  LE -> case typ of
+    (DInt UB n) -> putWord8 $ fromIntegral n
+    (DInt SB n) -> putWord8 $ fromIntegral n
+    (DInt UW n) -> putWord16le $ fromIntegral n
+    (DInt SW n) -> putWord16le $ fromIntegral n
+    (DInt UD n) -> putWord32le $ fromIntegral n
+    (DInt SD n) -> putWord32le $ fromIntegral n
+    (DInt UQ n) -> putWord64le $ fromIntegral n
+    (DInt SQ n) -> putWord64le $ fromIntegral n
 
-encodeData :: Structure -> [String] -> Put
-encodeData typs values = sequence_ . map putDValue $ zipWith mkDValue typs values
 
 -- Bit Data Definitions
 data BitData = BDBit
@@ -147,12 +169,48 @@ cycleConduit as = CL.sourceList $ cycle as
 
 num2byte = putWord8 . read
 
+--Run main program, either encoding or decoding
 run (Config end typs enc outFile) inFile =
+  coding end inFile outFile where
+    coding = case enc of
+      CSV -> csvToBinary
+      Binary -> binaryToCSV
+  
+csvToBinary end inFile outFile =
+  --keep reading number based on the types until the file ends.
   runResourceT $ 
-    CU.zip (CL.sourceList (cycle typs)) (fileToValues inFile) =$=
-    CL.map (putDValue . (uncurry mkDValue)) =$=
-    conduitPut $$
-    sinkFile outFile
+  CU.zip (CL.sourceList (cycle typs)) (fileToValues inFile) =$=
+  CL.map (putDValue end . (uncurry mkDValue)) =$=
+  conduitPut $$
+  sinkFile outFile
+
+singleton a = [a]
+
+printer ::
+  (MonadIO m, MonadResource m, Show a) =>
+  Conduit a m a
+printer = do
+  a <- await
+  case a of
+    Just val -> do
+      liftIO . putStrLn . show $ val
+      yield val
+      printer
+    Nothing -> return ()
+
+showDValue :: DValue -> String
+showDValue = printf "%d" . dNum
+
+binaryToCSV end inFile outFile = 
+  runResourceT $ 
+  sourceFile inFile =$=
+  conduitGet (sequence (map (getDValue end) typs)) =$=
+  --CL.map (intercalate ", " . map show) =$=
+  CL.map (map showDValue) =$=
+  CL.map (intercalate ", ") =$=
+  CL.map (++ "\n") =$=
+  CL.map (B.pack . (map (toEnum . fromEnum))) $$
+  sinkFile outFile
   
 
 options :: [OptDescr (Config -> IO Config)]
@@ -163,8 +221,7 @@ options =
             contents <- parseCSVFromFile arg
             case contents of
               Left err -> error $ show err
-              Right csv -> do
-                let typeNames = P.head csv
+              Right (typeNames:rest) -> do
                 let typs = map read typeNames
                 return $ option {types = typs})
                  "FILE")
@@ -187,8 +244,17 @@ options =
 main = do
   args <- getArgs
   case getOpt Permute options args of
+    --Arguments correctly parsed
     (opts, inFile:[],  [])   -> do
+      --Make changes to default configuration
       config <- foldl (>>=) (return defaultConfig) opts
+      --run program
       run config inFile
-    (_,     nonOpts, [])   -> error $ "Unrecognized arguments: " ++ unwords nonOpts
-    (_,     _,       msgs) -> error $ concat msgs ++ usageInfo "" options
+
+    --Arguments not valid
+    (_,     nonOpts, [])   -> error $
+      "Unrecognized arguments: " ++ unwords nonOpts
+
+    --Other errors
+    (_,     _,       msgs) -> error $
+      concat msgs ++ usageInfo "" options

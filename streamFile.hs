@@ -26,8 +26,9 @@ oneSecond = 1000000
 
 data Config = Config { monitoring :: Bool
                      , chunkSize :: Int
+                     , sockType :: SocketType
                      }
-defaultConfig = Config False (-1)
+defaultConfig = Config False (-1) Stream
 
 pipeFileHandle hIn pos chunkSize monit = do
   size <- liftIO $ fromIntegral <$> hFileSize hIn
@@ -43,8 +44,9 @@ pipeFileHandle hIn pos chunkSize monit = do
       liftIO $ C.threadDelay oneSecond
       pipeFileHandle hIn pos chunkSize monit
      else return ()
-allocSocket ip port = do
-  socket <- socket AF_INET Datagram defaultProtocol
+
+allocSocket ip port typ = do
+  socket <- socket AF_INET typ defaultProtocol
   hostAddr <- inet_addr ip
   connect socket $ SockAddrInet port hostAddr
   return socket
@@ -59,12 +61,16 @@ options =
 
    Option ['m'] ["monitor"]
           (NoArg (\ option -> option {monitoring = True}))
-          "Monitor the file and send newly written data over the network"
+          "Monitor the file and send newly written data over the network",
+
+   Option ['u'] ["udp"]
+          (NoArg (\ option -> option {sockType = Datagram}))
+          "Send the file using UDP"
  ]
   
 
-run (Config monit size) fileName ip port =  withSocketsDo $ runResourceT $ do
-    (sockKey, sock) <- allocate (allocSocket ip port) sClose
+run (Config monit size typ) fileName ip port =  withSocketsDo $ runResourceT $ do
+    (sockKey, sock) <- allocate (allocSocket ip port typ) sClose
     (hKey, h) <- allocate (IO.openFile fileName IO.ReadMode) hClose
     pipeFileHandle h 0 size monit $$ sinkSocket sock
 

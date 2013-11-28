@@ -20,6 +20,8 @@ import Data.Conduit.Filesystem
 import Data.ByteString as BS
 import Data.Word
 
+import Conduit
+
 
 oneSecond = 1000000 
 
@@ -54,8 +56,7 @@ main = do
     , "port = " ++ portStr
     ]
   let port = fromIntegral $ (read portStr :: Int)
-  let openH = IO.openFile fileName IO.ReadMode
   withSocketsDo $ runResourceT $ do
     (sockKey, sock) <- allocate (allocSocket ip port) sClose
-    (hKey, h) <- allocate openH hClose
+    (hKey, h) <- allocate (openH fileName) hClose
     pipeFileHandle h 0 chunkSize $$ sinkSocket sock

@@ -14,6 +14,7 @@ import qualified Data.ByteString as B
 import Text.Printf
 
 import Types
+import Utils
 
 mergeRows :: (Monad m) => Conduit [a] m a
 mergeRows = CL.concat
@@ -47,14 +48,22 @@ printer = do
 showDValue :: DValue -> String
 showDValue = printf "%d" . dNum
 
+dval2Bytes vals = vals #
+                  map showDValue #
+                  intercalate ", " #
+                  ("\n" ++) #
+                  map (toEnum . fromEnum) #
+                  B.pack
+
 binaryToCSV end typs inFile outFile = 
   runResourceT $ 
   sourceFile inFile =$=
   conduitGet (sequence (map (getDValue end) typs)) =$=
-  CL.map (map showDValue) =$=
-  CL.map (intercalate ", ") =$=
-  CL.map (++ "\n") =$=
-  CL.map (B.pack . (map (toEnum . fromEnum))) $$
+  CL.map dval2Bytes $$
+  --CL.map (map showDValue) =$=
+  --CL.map (intercalate ", ") =$=
+  --CL.map (++ "\n") =$=
+  --CL.map (B.pack . (map (toEnum . fromEnum))) $$
   sinkFile outFile
 
 csvToBinary end typs inFile outFile =
@@ -64,4 +73,18 @@ csvToBinary end typs inFile outFile =
   CL.map (putDValue end . (uncurry mkDValue)) =$=
   conduitPut $$
   sinkFile outFile
+
+openH fileName = IO.openFile fileName IO.ReadMode
+
+fileInChunks fileName n = let
+  fileInChunks' = do
+    input <- liftIO $ BS.hGet h n
+    if BS.length input > 0
+      then do yield input
+              fileInChunks' h n
+      else return ()
+  in do
+    (hKey, h) <- allocate (openH fileName) hClose
+    fileInChunks' h n
+    release hKey
 

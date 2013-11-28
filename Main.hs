@@ -16,8 +16,6 @@ import Types
 import Conduits
 
 
-
-
 --Run main program, either encoding or decoding
 run (Config end typs enc outFile) inFile =
   coding end typs inFile outFile where

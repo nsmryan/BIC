@@ -5,6 +5,8 @@ import System.Console.GetOpt
 import System.Environment
 import System.FilePath.Posix
 
+import Control.Monad.IO.Class
+
 import Control.Applicative
 
 import qualified Data.ByteString as BS
@@ -38,8 +40,16 @@ binHexConduit = CL.map (BS.pack . map char2word . bs2hex)
 
 chunksOf n = CL.sequence (CB.take n)
 
+printLength = do
+  maybeBytes <- await
+  case maybeBytes of
+    Just bs -> do
+      liftIO $ putStrLn $ "received bytes of length " ++ (show $ BS.length bs)
+      yield bs
+    Nothing -> return ()
+
 run (Config outFile conv) inFile = runResourceT $
-  sourceFile inFile =$=  converter $$ sinkFile outFile where
+  sourceFile inFile =$=  printLength =$= converter $$ sinkFile outFile where
     converter = case conv of
       HexToBinary -> hexBinConduit
       BinaryToHex -> binHexConduit

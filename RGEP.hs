@@ -1,3 +1,5 @@
+import System.Random.MWC
+
 import qualified Data.Sequence as S
 import qualified Data.Vector as V
 import Data.Word
@@ -6,6 +8,9 @@ import Data.List
 import Data.Bits
 
 import Control.Arrow
+import Control.Applicative
+import Control.Monad
+import Control.Monad.Primitive
 
 
 {- Operators -}
@@ -55,42 +60,63 @@ tuck = Op "tuck" (Arity 2 3) $ \ (a:a':as) -> (a:a':a:as)
 -- Expressions
 --
 
-filterUnderflows ops = map fst . filter (snd) . zip ops . snd . mapAccumR composeEffects mempty $ ops where
-    composeEffects arr op = if outputs arr < inputs (arity op) then (arr, False) else (arr <> arity op, True)
+filterUnderflows ops = map fst . filter (snd) . zip ops . snd . mapAccumL composeEffects mempty $ ops
+composeEffects arr op = if outputs arr < inputs (arity op) then (arr, False) else (arr <> arity op, True)
+
+progArity = Arity 0 1 --from [] to [a]
+
+dec a = a-1
 
 onlyRunnable = uncurry take . (lastFullProg &&& id) where
-  lastFullProg = last . findIndices ((==1) . outputs) . scanl (<>) mempty . map arity
+  lastFullProg = (1+) . last . findIndices (== progArity) . scanl1 (<>) . map arity
 
 cleanProg = onlyRunnable . filterUnderflows
 
 stackEffect :: [Op a] -> Arity
 stackEffect = mconcat . map arity
 
-runOpsUnsafe ops = foldr (.) id (map program ops)
-runOps = runOpsUnsafe . filterUnderflows
-toStackProg = reverse
+runOpsUnsafe ops = foldl (.) id (map program . reverse $ ops) []
+runOps = runOpsUnsafe . cleanProg
+
+runProgram prog = let prog' = cleanProg prog in
+  case prog' of
+    [] -> Nothing
+    as -> Just . head . runOpsUnsafe $ prog'
+
+runProgramWithDefault def prog = maybe def id (runProgram prog)
 
 testStacks = do
-      let prog = toStackProg [oneTerm, twoTerm, plusOp, dup, timesOp] 
-      let progUnderflow = toStackProg [oneTerm, twoTerm, plusOp, timesOp] 
+      let prog = [oneTerm, twoTerm, plusOp, dup, timesOp, twoTerm] 
+      let progUnderflow = [oneTerm, twoTerm, plusOp, timesOp] 
       print $ "safe program"
       print $ map name prog
       print $ "safe program, filtered"
       print $ map name $ filterUnderflows prog
+      print $ "safe program, cleaned"
+      print $ map name $ cleanProg prog
       print $ "safe program, run unsafe"
-      print $ runOpsUnsafe prog []
+      print $ runOpsUnsafe prog
       print $ "safe program, run safe"
-      print $ runOps prog []
+      print $ runOps prog
       print $ "unsafe program"
       print $ map name progUnderflow
       print $ "unsafe program, filtered"
       print $ map name $ filterUnderflows progUnderflow
+      print $ "unsafe program, cleaned"
+      print $ map name $ cleanProg progUnderflow
       print $ "unsafe program, safely"
-      print $ runOps progUnderflow []
+      print $ runOps progUnderflow
       print $ "unsafe program, unsafely"
-      print $ runOpsUnsafe progUnderflow []
+      print $ runOpsUnsafe progUnderflow
 
 {- Express raw bits -}
+
+bitsUsed ops = let (terms, nonterms) = splitSymbols ops in
+  if length terms > 0 && length nonterms > 0
+    then 1 + max (bitsRequired (length terms)) (bitsRequired (length nonterms))
+    else error "There must be at least one terminal symbol and one nonterminal symbol"
+
+bitsRequired n = ceiling $ logBase 2 (fromIntegral n)
 
 splitSymbols ops = (filter ((==0) . inputs . arity) ops, filter ((/=0) . inputs . arity) ops)
 
@@ -114,4 +140,11 @@ testDecode = do
   putStrLn ""
   print $ (map (decode ops) termIndices :: [Op Int])
   print $ (map (decode ops) nontermIndices :: [Op Int])
+
+{- Generate Random population -}
+randomIndividual :: (PrimMonad m) => Int -> Word32 -> Gen (PrimState m) -> m [Word32]
+randomIndividual is bits g = replicateM is $ uniformR (0, (2^bits)-1) g 
+
+randomPopulation :: (PrimMonad m) => Int -> Int -> Word32 -> Gen (PrimState m) -> m [[Word32]]
+randomPopulation ps is bits g = replicateM ps $ randomIndividual is bits g
 

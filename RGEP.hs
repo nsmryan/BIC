@@ -130,10 +130,12 @@ bitsRequired n = ceiling $ logBase 2 (fromIntegral n)
 
 splitSymbols ops = (filter ((==0) . inputs . arity) ops, filter ((/=0) . inputs . arity) ops)
 
-decode :: [Op a] -> (Word32 -> Op a)
+type Decoder a = Word32 -> Op a
+
+decode :: [Op a] -> Decoder
 decode ops = uncurry decodeSymbols $ splitSymbols ops
 
-decodeSymbols :: [Op a] -> [Op a] -> (Word32 -> Op a)
+decodeSymbols :: [Op a] -> [Op a] -> Decoder
 decodeSymbols terms nonterms = let
   termsV = V.fromList terms
   nontermsV = V.fromList nonterms
@@ -152,20 +154,25 @@ testDecode = do
   print $ map (decode ops) nontermIndices
 
 {- Generate Random population -}
+type Ind32 = S.Seq Word32
+type Pop32 = S.Seq Ind32
+type IndR = S.Seq Double
+type PopR = S.Seq IndR
+
 ind32 :: (MonadPrim m) =>
-  Int -> Word32 -> Rand m (S.Seq Word32)
+  Int -> Word32 -> Rand m Ind32
 ind32 is bits = S.replicateM is $ uniformR (0, (2^bits)-1)
 
 pop32 :: (MonadPrim m) =>
-  Int -> Int -> Word32 -> Rand m (S.Seq (S.Seq Word32))
+  Int -> Int -> Word32 -> Rand m Population
 pop32 ps is bits = S.replicateM ps $ ind32 is bits
 
 indR :: (MonadPrim m) =>
-  Int -> Rand m (S.Seq Double)
+  Int -> Rand m IndR
 indR is = S.replicateM is $ uniformR (0, 1)
 
 popR :: (MonadPrim m) =>
-  Int -> Int -> Rand m (S.Seq (S.Seq Double))
+  Int -> Int -> Rand m PopR
 popR ps is = S.replicateM ps $ indR is
 
 {- Incremental Population Based Learning -}
@@ -255,7 +262,22 @@ testRGEP = do
   print $ negate fit
 
 {- Random Mutation Hill Climbing RGEP -}
-rmhc is gens mutRate mutFunction eval = undefined
+
+type Mutator p = [Int] -> p -> p
+
+rgepMutator :: Int -> Int -> Int -> [Int] -> [Mutator Pop32]
+rgepMutator ps is bits is = takeWhile (< locs) pos where
+  pos = scanl (+) 
+
+rmhc is gens mutRate mutFunction eval = do
+  undefined
+
+testRMHC = do
+  let decoder = decode ops
+  let eval = (0-) . runProgramWithDefault 0 . fmap decoder
+  (ind, fit) <- runWithSystemRandom . asRandIO $ rmhc 10 100 0.1 pmIndividual eval
+  printf ind
+  printf fit
 
 {- GA RGEP -}
 

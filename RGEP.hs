@@ -132,10 +132,10 @@ splitSymbols ops = (filter ((==0) . inputs . arity) ops, filter ((/=0) . inputs 
 
 type Decoder a = Word32 -> Op a
 
-decode :: [Op a] -> Decoder
+decode :: [Op a] -> Decoder a
 decode ops = uncurry decodeSymbols $ splitSymbols ops
 
-decodeSymbols :: [Op a] -> [Op a] -> Decoder
+decodeSymbols :: [Op a] -> [Op a] -> Decoder a
 decodeSymbols terms nonterms = let
   termsV = V.fromList terms
   nontermsV = V.fromList nonterms
@@ -164,7 +164,7 @@ ind32 :: (MonadPrim m) =>
 ind32 is bits = S.replicateM is $ uniformR (0, (2^bits)-1)
 
 pop32 :: (MonadPrim m) =>
-  Int -> Int -> Word32 -> Rand m Population
+  Int -> Int -> Word32 -> Rand m Pop32
 pop32 ps is bits = S.replicateM ps $ ind32 is bits
 
 indR :: (MonadPrim m) =>
@@ -240,7 +240,7 @@ pack :: [Bool] -> Word32
 pack bs = foldl (\ w b -> (w `shiftL` 1) .|. b2i b) 0 bs
 
 collect ::  Int -> S.Seq Bool -> [Word32]
-collect n bs = pack <$> (chunk n $ F.toList bs)
+collect n bs = pack <$> (chunksOf n $ F.toList bs)
 
 rgepPBIL ops ps is gens learn neglearn mutRate mutShift eval =
   pbil ps bs gens learn neglearn mutRate mutShift (collect bits) eval where
@@ -266,18 +266,26 @@ testRGEP = do
 type Mutator p = [Int] -> p -> p
 
 rgepMutator :: Int -> Int -> Int -> [Int] -> [Mutator Pop32]
-rgepMutator ps is bits is = takeWhile (< locs) pos where
-  pos = scanl (+) 
+rgepMutator ps is bits ixs = undefined 
 
-rmhc is gens mutRate mutFunction eval = do
-  undefined
+rmhc :: (MonadPrim m) =>
+  Int -> Int -> Double -> (Ind32 -> m Ind32) -> ([Word32] -> Double) -> m (Ind32, Pop32)
+rmhc is gens mutRate mutFunction eval = undefined
+
+pmIndividual = undefined
+
+indexFromSource :: (a -> a) -> Int -> Seq a -> State [Int] (Seq a)
+indexFromSource f n s = do
+  skips <- skip n
+  let (top, bottom) = S.split skips s
 
 testRMHC = do
+  let ops = [zeroTerm, oneTerm, twoTerm, plusOp, timesOp, dup]
   let decoder = decode ops
-  let eval = (0-) . runProgramWithDefault 0 . fmap decoder
+  let eval = (0.0 -) . fromIntegral . runProgramWithDefault 0 . fmap decoder
   (ind, fit) <- runWithSystemRandom . asRandIO $ rmhc 10 100 0.1 pmIndividual eval
-  printf ind
-  printf fit
+  print ind
+  print fit
 
 {- GA RGEP -}
 

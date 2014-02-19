@@ -175,7 +175,11 @@ ind32 is numBits = S.replicateM is $ uniformR (0, bits) where
   bits = (2 ^ (fromIntegral numBits)) - 1
 
 pop32 :: (MonadPrim m) =>
+<<<<<<< HEAD
   Int -> Int -> Int -> Rand m Pop32
+=======
+  Int -> Int -> Word32 -> Rand m Pop32
+>>>>>>> 51bbecf94fbaefdf8aafff2aace280ad6fcb8579
 pop32 ps is bits = S.replicateM ps $ ind32 is bits
 
 indR :: (MonadPrim m) =>
@@ -260,7 +264,7 @@ pack :: [Bool] -> Word32
 pack bs = foldl (\ w b -> (w `shiftL` 1) .|. b2i b) 0 bs
 
 collect ::  Int -> S.Seq Bool -> [Word32]
-collect n bs = pack <$> (chunk n $ F.toList bs)
+collect n bs = pack <$> (chunksOf n $ F.toList bs)
 
 rgepPBIL ops ps is gens learn neglearn mutRate mutShift eval =
   pbil ps bs gens learn neglearn mutRate mutShift (collect bits) eval where
@@ -283,6 +287,7 @@ testRGEP = do
 
 {- Random Mutation Hill Climbing RGEP -}
 
+<<<<<<< HEAD
 repeatM = sequence . repeat
 
 getHead = do
@@ -343,6 +348,31 @@ testRMHC = do
   (ind, fit) <- runWithSystemRandom . asRandIO $ rmhc 10 100 0.1 mutateLocus ops eval
   printf $ show ind
   printf $ show fit
+=======
+type Mutator p = [Int] -> p -> p
+
+rgepMutator :: Int -> Int -> Int -> [Int] -> [Mutator Pop32]
+rgepMutator ps is bits ixs = undefined 
+
+rmhc :: (MonadPrim m) =>
+  Int -> Int -> Double -> (Ind32 -> m Ind32) -> ([Word32] -> Double) -> m (Ind32, Pop32)
+rmhc is gens mutRate mutFunction eval = undefined
+
+pmIndividual = undefined
+
+indexFromSource :: (a -> a) -> Int -> Seq a -> State [Int] (Seq a)
+indexFromSource f n s = do
+  skips <- skip n
+  let (top, bottom) = S.split skips s
+
+testRMHC = do
+  let ops = [zeroTerm, oneTerm, twoTerm, plusOp, timesOp, dup]
+  let decoder = decode ops
+  let eval = (0.0 -) . fromIntegral . runProgramWithDefault 0 . fmap decoder
+  (ind, fit) <- runWithSystemRandom . asRandIO $ rmhc 10 100 0.1 pmIndividual eval
+  print ind
+  print fit
+>>>>>>> 51bbecf94fbaefdf8aafff2aace280ad6fcb8579
 
 {- GA RGEP -}
 

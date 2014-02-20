@@ -348,31 +348,6 @@ testRMHC = do
   (ind, fit) <- runWithSystemRandom . asRandIO $ rmhc 10 100 0.1 mutateLocus ops eval
   printf $ show ind
   printf $ show fit
-=======
-type Mutator p = [Int] -> p -> p
-
-rgepMutator :: Int -> Int -> Int -> [Int] -> [Mutator Pop32]
-rgepMutator ps is bits ixs = undefined 
-
-rmhc :: (MonadPrim m) =>
-  Int -> Int -> Double -> (Ind32 -> m Ind32) -> ([Word32] -> Double) -> m (Ind32, Pop32)
-rmhc is gens mutRate mutFunction eval = undefined
-
-pmIndividual = undefined
-
-indexFromSource :: (a -> a) -> Int -> Seq a -> State [Int] (Seq a)
-indexFromSource f n s = do
-  skips <- skip n
-  let (top, bottom) = S.split skips s
-
-testRMHC = do
-  let ops = [zeroTerm, oneTerm, twoTerm, plusOp, timesOp, dup]
-  let decoder = decode ops
-  let eval = (0.0 -) . fromIntegral . runProgramWithDefault 0 . fmap decoder
-  (ind, fit) <- runWithSystemRandom . asRandIO $ rmhc 10 100 0.1 pmIndividual eval
-  print ind
-  print fit
->>>>>>> 51bbecf94fbaefdf8aafff2aace280ad6fcb8579
 
 {- GA RGEP -}
 

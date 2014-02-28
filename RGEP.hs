@@ -1,5 +1,7 @@
+module RGEP where
 
 import System.Random.MWC.Monad
+import System.Random.MWC.Distributions
 import qualified Data.Sequence as S
 import qualified Data.Vector as V
 import Data.Word
@@ -11,12 +13,15 @@ import Data.Function
 import qualified Data.Traversable as T
 import qualified Data.Foldable as F
 
+import Text.Printf
+
 import Control.Arrow
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Primitive
 import Control.Monad.Primitive.Class
-
+--import Control.Monad.State.Class
+import Control.Monad.Trans.State.Lazy
 
 {- Operators -}
 type Sym = String
@@ -50,10 +55,10 @@ plusOp = mkOp2 "+" (+)
 minusOp = mkOp2 "-" (-)
 timesOp = mkOp2 "*" (*)
 divOp = mkOp2 "/" (/)
-incOp = mkOp1 "inc" (1+)
-zeroTerm = mkTerm "0" (0)
-oneTerm = mkTerm "1" (1)
-twoTerm = mkTerm "2" (2)
+incOp = mkOp1 "inc" (1.0 +)
+zeroTerm = mkTerm "0" (0.0)
+oneTerm = mkTerm "1" (1.0)
+twoTerm = mkTerm "2" (2.0)
 
 -- Stack operations
 dup = Op "dup" (Arity 1 2) (uncurry (:) . (head &&& id))
@@ -93,6 +98,7 @@ runProgram prog = do
   guard . not . null $ runnable
   return $ runOpsUnsafe runnable
 
+runProgramWithDefault :: a -> [Op a] -> a
 runProgramWithDefault def prog = maybe def head (runProgram prog)
 
 testStacks = do
@@ -156,15 +162,24 @@ testDecode = do
 {- Generate Random population -}
 type Ind32 = S.Seq Word32
 type Pop32 = S.Seq Ind32
+
 type IndR = S.Seq Double
 type PopR = S.Seq IndR
 
+type IndBits = Int
+type PopBits = S.Seq IndBits
+
 ind32 :: (MonadPrim m) =>
-  Int -> Word32 -> Rand m Ind32
-ind32 is bits = S.replicateM is $ uniformR (0, (2^bits)-1)
+  Int -> Int -> Rand m Ind32
+ind32 is numBits = S.replicateM is $ uniformR (0, bits) where
+  bits = (2 ^ (fromIntegral numBits)) - 1
 
 pop32 :: (MonadPrim m) =>
+<<<<<<< HEAD
+  Int -> Int -> Int -> Rand m Pop32
+=======
   Int -> Int -> Word32 -> Rand m Pop32
+>>>>>>> 51bbecf94fbaefdf8aafff2aace280ad6fcb8579
 pop32 ps is bits = S.replicateM ps $ ind32 is bits
 
 indR :: (MonadPrim m) =>
@@ -175,8 +190,17 @@ popR :: (MonadPrim m) =>
   Int -> Int -> Rand m PopR
 popR ps is = S.replicateM ps $ indR is
 
+indBits :: (MonadPrim m) =>
+   Int -> Rand m IndBits
+indBits cap = uniformR (0, cap)
+
+popBits :: (MonadPrim m) =>
+  Int -> Int -> Rand m PopBits
+popBits len cap = S.replicateM len $ indBits cap
+
 {- Incremental Population Based Learning -}
 minBy f a b = if f a < f b then a else b
+maxBy :: (Ord b) => (a -> b) -> a -> a -> a
 maxBy f a b = if f a > f b then a else b
 
 timesM :: (Monad m) => Int -> a -> (a -> m a) -> m a
@@ -224,7 +248,7 @@ pbil ps is gens learn neglearn mutRate mutShift express eval = do
   ((finalBest, fit), probs) <- timesM gens ((initialBest, eval $ express initialBest), probs) $ pbil' ps learn neglearn mutRate mutShift express eval
   return (express finalBest, fit, probs)
 
-maxValue = ((0 -) . F.sum . fmap fromEnum)
+maxValue = ((0.0 -) . F.sum . fmap fromEnum)
 testPBIL = do
   let ps = 20
   let is = 100
@@ -263,29 +287,67 @@ testRGEP = do
 
 {- Random Mutation Hill Climbing RGEP -}
 
-type Mutator p = [Int] -> p -> p
+<<<<<<< HEAD
+repeatM = sequence . repeat
 
-rgepMutator :: Int -> Int -> Int -> [Int] -> [Mutator Pop32]
-rgepMutator ps is bits ixs = undefined 
+getHead = do
+  (s:ss) <- get
+  put ss
+  return s
 
-rmhc :: (MonadPrim m) =>
-  Int -> Int -> Double -> (Ind32 -> m Ind32) -> ([Word32] -> Double) -> m (Ind32, Pop32)
-rmhc is gens mutRate mutFunction eval = undefined
+putHead s = do
+  ss <- get
+  put (s:ss)
 
-pmIndividual = undefined
+skipping n = do
+  s <- getHead
+  let (d, m) = divMod n s
+  putHead m
+  return d
 
-indexFromSource :: (a -> a) -> Int -> Seq a -> State [Int] (Seq a)
-indexFromSource f n s = do
-  skips <- skip n
-  let (top, bottom) = S.split skips s
+randomly p n f as = do
+  indices <- repeatM . asRandIO . toRand $ geometric0 p
+  let as' = evalState (onIndices n f as) indices
+  return as'
 
+onIndices n f as = do
+  i <- skipping n
+  let (top, bottom) = S.splitAt i as
+  if S.null bottom
+    then return top
+    else do
+      a <- f $ S.index bottom 0
+      bottom' <- onIndices n f $ S.drop 1 bottom
+      return $ top S.>< S.singleton a S.>< bottom'
+
+rmhc is gens mutRate mutFunction ops eval = do
+  let bits = bitsUsed ops
+  initGenes <- ind32 is $ fromIntegral bits
+  fitness <- eval initGenes
+  let loop 0 ind = return ind
+      loop n ind@(genes, fitness) = do
+        genes' <- randomly mutRate bits mutFunction genes
+        fitness' <- eval genes'
+        let ind' = (genes', fitness)
+        loop (pred n) (maxBy ((>) `on` snd) ind' ind)
+    in
+      loop gens (initGenes, fitness)
+
+mutateLocus n = do
+  i <- getHead
+  return $! n `xor` (1 `shiftL` i)
+
+smap :: (a -> b) -> S.Seq a -> S.Seq b
+smap = fmap
+
+--eval as = return $ (0-) . runProgramWithDefault 0 . F.toList . smap decoder $ as
 testRMHC = do
   let ops = [zeroTerm, oneTerm, twoTerm, plusOp, timesOp, dup]
   let decoder = decode ops
-  let eval = (0.0 -) . fromIntegral . runProgramWithDefault 0 . fmap decoder
-  (ind, fit) <- runWithSystemRandom . asRandIO $ rmhc 10 100 0.1 pmIndividual eval
-  print ind
-  print fit
+  let eval as = return $ (0.0 -) . runProgramWithDefault 0 . F.toList . smap decoder $ as
+  (ind, fit) <- runWithSystemRandom . asRandIO $ rmhc 10 100 0.1 mutateLocus ops eval
+  printf $ show ind
+  printf $ show fit
 
 {- GA RGEP -}
 
